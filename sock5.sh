@@ -32,7 +32,7 @@ fi
 # ===== 环境变量检查 =====
 if [[ -z "${PORT:-}" || -z "${USERNAME:-}" || -z "${PASSWORD:-}" ]]; then
   echo "[ERROR] 必须设置 PORT、USERNAME、PASSWORD 变量，例如："
-  echo "PORT=16805 USERNAME=oneforall PASSWORD=allforone bash <(curl -Ls https://raw.githubusercontent.com/pingmike2/Keepalive/main/sock5.sh)"
+  echo "PORT=16805 USERNAME=oneforall PASSWORD=allforone bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/socks5/main/sock5.sh)"
   exit 1
 fi
 
