@@ -7,13 +7,15 @@
 
 ----
 
-## VPS版一键无交互脚本Socks5
-socks5
+## VPS版一键无交互脚本Socks5  安装/卸载脚本 (同时支持 IPv4 和 IPv6)
+用法
+### 安装：
 ```
-PORT=25410 USERNAME=用户名 PASSWORD=密码 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/socks5/main/sock5.sh)
+PORT=16805 USERNAME=用户名 PASSWORD=密码 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/socks5/main/sock5.sh)
 ```
+### 说明：IPv4 使用端口 PORT，IPv6 则使用端口 PORT+1
 
-卸载
+### 卸载:
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/socks5/main/sock5.sh) uninstall
 ```
