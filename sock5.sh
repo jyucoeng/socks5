@@ -1,9 +1,10 @@
 #!/bin/bash
 
-# sing-box socks5 安装/卸载脚本
+# sing-box socks5 安装/卸载脚本 (同时支持 IPv4 和 IPv6)
 # 用法：
 # 安装：
 #   PORT=16805 USERNAME=oneforall PASSWORD=allforone bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/socks5/main/sock5.sh)
+#   说明：IPv4 使用端口 PORT，IPv6 使用端口 PORT+1
 # 卸载：
 #   bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/socks5/main/sock5.sh) uninstall
 
@@ -38,7 +39,7 @@ fi
 
 # ===== 检测 LXC/Docker 容器环境 =====
 if grep -qaE 'lxc|docker' /proc/1/environ 2>/dev/null || grep -qaE 'lxc' /proc/1/cgroup 2>/dev/null; then
-  echo "[WARN] 检测到可能运行在 LXC/Docker 容器中，请确保容器网络配置允许外部访问端口 $PORT"
+  echo "[WARN] 检测到可能运行在 LXC/Docker 容器中，请确保容器网络配置允许外部访问端口 $PORT (IPv4) 和 $((PORT + 1)) (IPv6)"
 fi
 
 # ===== 获取公网 IP =====
@@ -109,22 +110,46 @@ cat > "$CONFIG_FILE" <<EOF
       "users": [{
         "username": "$USERNAME",
         "password": "$PASSWORD"
-      }]
+      }],
+      "sniff": {
+        "enabled": true,
+        "override_destination": false
+      }
     },
     {
       "type": "socks",
       "tag": "socks-in-v6",
       "listen": "::",
-      "listen_port": $PORT,
+      "listen_port": $((PORT + 1)),
       "users": [{
         "username": "$USERNAME",
         "password": "$PASSWORD"
-      }]
+      }],
+      "sniff": {
+        "enabled": true,
+        "override_destination": false
+      }
     }
   ],
-  "outbounds": [{
-    "type": "direct"
-  }]
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct-out",
+      "domain_strategy": "prefer_ipv4"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": ["socks-in-v4"],
+        "outbound": "direct-out"
+      },
+      {
+        "inbound": ["socks-in-v6"],
+        "outbound": "direct-out"
+      }
+    ]
+  }
 }
 EOF
 
@@ -139,50 +164,83 @@ sleep 4
 echo "[INFO] 检查端口监听状态..."
 
 if command -v ss >/dev/null 2>&1; then
-  LISTEN_INFO=$(ss -tnlp | grep ":$PORT" || true)
+  LISTEN_INFO_V4=$(ss -tnlp | grep ":$PORT" || true)
+  LISTEN_INFO_V6=$(ss -tnlp | grep ":$((PORT + 1))" || true)
 elif command -v netstat >/dev/null 2>&1; then
-  LISTEN_INFO=$(netstat -tnlp | grep ":$PORT" || true)
+  LISTEN_INFO_V4=$(netstat -tnlp | grep ":$PORT" || true)
+  LISTEN_INFO_V6=$(netstat -tnlp | grep ":$((PORT + 1))" || true)
 else
-  LISTEN_INFO=""
+  LISTEN_INFO_V4=""
+  LISTEN_INFO_V6=""
 fi
 
-if [[ -z "$LISTEN_INFO" ]]; then
-  echo "❌ 端口 $PORT 没有监听，请查看日志：$LOG_FILE"
+if [[ -z "$LISTEN_INFO_V4" && -z "$LISTEN_INFO_V6" ]]; then
+  echo "❌ 端口 $PORT 和 $((PORT + 1)) 都没有监听，请查看日志：$LOG_FILE"
   tail -n 20 "$LOG_FILE"
   exit 1
 fi
 
 echo "[INFO] 端口监听信息："
-echo "$LISTEN_INFO"
+[[ -n "$LISTEN_INFO_V4" ]] && echo "IPv4 (端口 $PORT): $LISTEN_INFO_V4"
+[[ -n "$LISTEN_INFO_V6" ]] && echo "IPv6 (端口 $((PORT + 1))): $LISTEN_INFO_V6"
 
 # ===== 本地连接测试 =====
 echo "[INFO] 测试本地 socks5 代理连接..."
-if curl -s --socks5-hostname "127.0.0.1:$PORT" -U "$USERNAME:$PASSWORD" http://ip.sb >/dev/null 2>&1; then
-  echo "✅ 本地 IPv4 代理连接测试成功"
+
+# 测试 IPv4 代理
+if [[ -n "$LISTEN_INFO_V4" ]]; then
+  if curl -s --socks5-hostname "127.0.0.1:$PORT" -U "$USERNAME:$PASSWORD" http://ip.sb >/dev/null 2>&1; then
+    echo "✅ 本地 IPv4 代理连接测试成功"
+  else
+    echo "❌ 本地 IPv4 代理连接测试失败，请检查 sing-box 配置和日志"
+    tail -n 20 "$LOG_FILE"
+  fi
 else
-  echo "❌ 本地 IPv4 代理连接测试失败，请检查 sing-box 配置和日志"
-  tail -n 20 "$LOG_FILE"
-  exit 1
+  echo "⚠️ IPv4 监听端口未启动，跳过 IPv4 测试"
 fi
 
-if curl -s --socks5-hostname "[::1]:$PORT" -U "$USERNAME:$PASSWORD" http://ip.sb >/dev/null 2>&1; then
-  echo "✅ 本地 IPv6 代理连接测试成功"
+# 测试 IPv6 代理
+if [[ -n "$LISTEN_INFO_V6" ]]; then
+  if curl -s --socks5-hostname "[::1]:$((PORT + 1))" -U "$USERNAME:$PASSWORD" http://ip.sb >/dev/null 2>&1; then
+    echo "✅ 本地 IPv6 代理连接测试成功"
+  else
+    echo "❌ 本地 IPv6 代理连接测试失败，请检查 sing-box 配置和日志"
+    tail -n 20 "$LOG_FILE"
+  fi
 else
-  echo "❌ 本地 IPv6 代理连接测试失败，请检查 sing-box 配置和日志"
-  tail -n 20 "$LOG_FILE"
+  echo "⚠️ IPv6 监听端口未启动，跳过 IPv6 测试"
+fi
+
+# 如果两个都失败则退出
+if [[ -z "$LISTEN_INFO_V4" && -z "$LISTEN_INFO_V6" ]]; then
+  echo "❌ IPv4 和 IPv6 代理都无法启动"
   exit 1
 fi
 
 # ===== 防火墙提示 =====
 echo
-echo "⚠️ 请确保服务器防火墙或云安全组已开放端口 $PORT 的 TCP 入站规则。"
+echo "⚠️ 请确保服务器防火墙或云安全组已开放以下端口的 TCP 入站规则："
+echo "  - 端口 $PORT (IPv4)"
+echo "  - 端口 $((PORT + 1)) (IPv6)"
 echo "示例（iptables 放行端口命令）："
 echo "iptables -I INPUT -p tcp --dport $PORT -j ACCEPT"
+echo "iptables -I INPUT -p tcp --dport $((PORT + 1)) -j ACCEPT"
+echo "ip6tables -I INPUT -p tcp --dport $((PORT + 1)) -j ACCEPT"
 echo
 
 # ===== 输出连接信息 =====
 echo "✅ Socks5 启动成功："
-echo "socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT (IPv4)"
-echo "socks5://$USERNAME:$PASSWORD@$IP_V6:$PORT (IPv6)"
+if [[ -n "$LISTEN_INFO_V4" ]]; then
+  echo "IPv4: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
+fi
+if [[ -n "$LISTEN_INFO_V6" ]]; then
+  echo "IPv6: socks5://$USERNAME:$PASSWORD@[$IP_V6]:$((PORT + 1))"
+fi
+echo
+echo "💡 使用说明："
+echo "  - IPv4 客户端连接: $IP_V4:$PORT"
+echo "  - IPv6 客户端连接: [$IP_V6]:$((PORT + 1))"
+echo "  - 用户名: $USERNAME"
+echo "  - 密码: $PASSWORD"
 
 exit 0
