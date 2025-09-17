@@ -1,7 +1,7 @@
 # 项目说明
  socks5
 
-## Serv00保活直接用老王的项目
+## 老王的保活项目
 - 老王[仓库地址](https://github.com/eooce/Sing-box)  
 > 特点：全自动保活
 
