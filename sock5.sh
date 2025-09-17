@@ -111,10 +111,7 @@ cat > "$CONFIG_FILE" <<EOF
         "username": "$USERNAME",
         "password": "$PASSWORD"
       }],
-      "sniff": {
-        "enabled": true,
-        "override_destination": false
-      }
+      "sniff": true
     },
     {
       "type": "socks",
@@ -125,10 +122,7 @@ cat > "$CONFIG_FILE" <<EOF
         "username": "$USERNAME",
         "password": "$PASSWORD"
       }],
-      "sniff": {
-        "enabled": true,
-        "override_destination": false
-      }
+      "sniff": true
     }
   ],
   "outbounds": [
