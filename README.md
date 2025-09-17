@@ -1,7 +1,7 @@
 # 项目说明
  socks5
 
-## Serv00保活直接用老王的项目
+## 老王的保活项目
 - 老王[仓库地址](https://github.com/eooce/Sing-box)  
 > 特点：全自动保活
 
@@ -15,7 +15,7 @@ PORT=25410 USERNAME=用户名 PASSWORD=密码 bash <(curl -Ls https://raw.github
 
 卸载
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/pingmike2/Keepalive/main/sock5.sh) uninstall
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/socks5/main/sock5.sh) uninstall
 ```
 查看配置
 ```
