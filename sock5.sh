@@ -110,8 +110,7 @@ cat > "$CONFIG_FILE" <<EOF
       "users": [{
         "username": "$USERNAME",
         "password": "$PASSWORD"
-      }],
-      "sniff": true
+      }]
     },
     {
       "type": "socks",
@@ -121,29 +120,14 @@ cat > "$CONFIG_FILE" <<EOF
       "users": [{
         "username": "$USERNAME",
         "password": "$PASSWORD"
-      }],
-      "sniff": true
+      }]
     }
   ],
   "outbounds": [
     {
-      "type": "direct",
-      "tag": "direct-out",
-      "domain_strategy": "prefer_ipv4"
+      "type": "direct"
     }
-  ],
-  "route": {
-    "rules": [
-      {
-        "inbound": ["socks-in-v4"],
-        "outbound": "direct-out"
-      },
-      {
-        "inbound": ["socks-in-v6"],
-        "outbound": "direct-out"
-      }
-    ]
-  }
+  ]
 }
 EOF
 
