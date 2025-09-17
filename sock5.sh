@@ -115,7 +115,7 @@ cat > "$CONFIG_FILE" <<EOF
     {
       "type": "socks",
       "tag": "socks-in-v6",
-      "listen": "::",
+      "listen": "0.0.0.0",
       "listen_port": $((PORT + 1)),
       "users": [{
         "username": "$USERNAME",
@@ -209,16 +209,22 @@ echo
 # ===== 输出连接信息 =====
 echo "✅ Socks5 启动成功："
 if [[ -n "$LISTEN_INFO_V4" ]]; then
-  echo "IPv4: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
+  echo "IPv4 主要端口: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
 fi
 if [[ -n "$LISTEN_INFO_V6" ]]; then
-  echo "IPv6: socks5://$USERNAME:$PASSWORD@[$IP_V6]:$((PORT + 1))"
+  echo "IPv4 兼容端口: socks5://$USERNAME:$PASSWORD@$IP_V4:$((PORT + 1))"
 fi
 echo
-echo "💡 使用说明："
-echo "  - IPv4 客户端连接: $IP_V4:$PORT"
-echo "  - IPv6 客户端连接: [$IP_V6]:$((PORT + 1))"
+echo "💡 重要说明："
+echo "  - 纯 IPv4 客户端请使用: $IP_V4:$PORT 或 $IP_V4:$((PORT + 1))"
+echo "  - 纯 IPv6 客户端请使用: [$IP_V6]:$PORT 或 [$IP_V6]:$((PORT + 1))"
+echo "  - 双栈客户端可以使用任意端口"
 echo "  - 用户名: $USERNAME"
 echo "  - 密码: $PASSWORD"
+echo
+echo "⚠️ 网络兼容性说明："
+echo "  - IPv4 客户端无法直接连接 IPv6 地址"
+echo "  - IPv6 客户端无法直接连接 IPv4 地址（除非有 NAT64）"
+echo "  - 建议使用双栈网络环境以获得最佳兼容性"
 
 exit 0
