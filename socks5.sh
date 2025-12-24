@@ -275,9 +275,9 @@ main() {
 
   echo
   yellow "管理命令："
-  green "  systemctl status sing-box-socks5"
-  green "  systemctl restart sing-box-socks5"
-  green "  journalctl -u sing-box-socks5 -f"
+  green "查看状态:  systemctl status sing-box-socks5"
+  green "重启服务:   systemctl restart sing-box-socks5"
+  green "查看日志:   journalctl -u sing-box-socks5 -f"
 }
 
 main "$@"
