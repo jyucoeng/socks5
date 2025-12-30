@@ -468,9 +468,9 @@ main() {
     show_node; exit 0 ;;
   esac
 
+  install_deps
   handle_params
   stop_existing_service
-  install_deps
   install_singbox
   generate_config
   start_service
