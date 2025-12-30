@@ -16,8 +16,8 @@
 #  curl -6 --socks5-hostname "[ipv6]:端口号" -U 用户名:密码 http://ip.sb
 #
 
-
 set -e
+
 
 ########################
 # root 校验
@@ -40,7 +40,7 @@ SB_VERSION="1.12.13"
 SB_VER="v${SB_VERSION}"
 
 ########################
-# 颜色工具
+# 颜色
 ########################
 green(){ echo -e "\e[1;32m$1\033[0m"; }
 yellow(){ echo -e "\e[1;33m$1\033[0m"; }
@@ -53,8 +53,32 @@ blue(){ echo -e "\e[1;34m$1\033[0m"; }
 gen_username() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 10; }
 gen_password() { tr -dc 'A-Za-z0-9!@#%^_+' </dev/urandom | head -c 12; }
 
+########################
+# 端口检测（多方案兜底）
+########################
 check_port_free() {
-  ss -lntH | grep -E "(:|\])$1\b" >/dev/null && return 1 || return 0
+  local port="$1"
+
+  if command -v ss >/dev/null 2>&1; then
+    ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE "(:|\])$port$" && return 1
+    return 0
+  fi
+
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -lnt 2>/dev/null | awk '{print $4}' | grep -qE "(:|\])$port$" && return 1
+    return 0
+  fi
+
+  grep -q ":$(printf '%04X' "$port")" /proc/net/tcp /proc/net/tcp6 2>/dev/null && return 1
+  return 0
+}
+
+gen_random_port() {
+  while :; do
+    local p
+    p=$(shuf -i 1-65535 -n 1)
+    check_port_free "$p" && { echo "$p"; return; }
+  done
 }
 
 ########################
@@ -71,78 +95,70 @@ detect_init_system() {
 }
 
 ########################
-# 非交互兜底校验
-########################
-ensure_required_env() {
-  red "❌ 缺少必要参数：PORT"
-  red "👉 当前环境无法进行交互输入"
-  yellow "👉 示例：PORT=1080 bash socks5.sh"
-  exit 1
-}
-
-########################
 # 停止旧服务
 ########################
 stop_existing_service() {
   detect_init_system
-
   case "$INIT_SYSTEM" in
     systemd)
-      systemctl is-active --quiet "$SERVICE_NAME" && systemctl stop "$SERVICE_NAME"
+      systemctl is-active --quiet "$SERVICE_NAME" && systemctl stop "$SERVICE_NAME" || true
       ;;
     openrc)
-      rc-service "$SERVICE_NAME" status >/dev/null 2>&1 && rc-service "$SERVICE_NAME" stop
+      rc-service "$SERVICE_NAME" status >/dev/null 2>&1 && rc-service "$SERVICE_NAME" stop || true
       ;;
   esac
 }
 
 ########################
-# 参数处理
+# 参数处理（修复版）
 ########################
 handle_params() {
 
-  ########################
-  # 安装模式判定
-  ########################
+  NON_INTERACTIVE=0
+
   if [[ -n "$PORT" || -n "$USERNAME" || -n "$PASSWORD" ]]; then
     NON_INTERACTIVE=1
     yellow "👉 非交互式安装"
   else
-    NON_INTERACTIVE=0
     yellow "👉 交互式安装"
   fi
 
   ########################
-  # PORT 处理
+  # PORT 处理（不再 exit）
   ########################
-  if [[ "$NON_INTERACTIVE" == "1" && -z "$PORT" ]]; then
-    ensure_required_env
-  fi
-
   while :; do
     if [[ -z "$PORT" ]]; then
-      read -rp "请输入端口号: " PORT
+      if [[ "$NON_INTERACTIVE" == "1" ]]; then
+        PORT=$(gen_random_port)
+        yellow "👉 未指定 PORT，自动生成: $PORT"
+      else
+        read -rp "请输入端口号: " PORT
+      fi
     fi
 
     if ! [[ "$PORT" =~ ^[0-9]+$ ]] || ((PORT < 1 || PORT > 65535)); then
       red "❌ 端口必须是 1-65535 的数字"
-      [[ "$NON_INTERACTIVE" == "1" ]] && exit 1
       PORT=""
       continue
     fi
 
     if ! check_port_free "$PORT"; then
-      red "❌ 端口被占用，请重新输入"
-      [[ "$NON_INTERACTIVE" == "1" ]] && exit 1
-      PORT=""
-      continue
+      if [[ "$NON_INTERACTIVE" == "1" ]]; then
+        yellow "👉 端口被占用，重新生成"
+        PORT=""
+        continue
+      else
+        red "❌ 端口被占用，请重新输入"
+        PORT=""
+        continue
+      fi
     fi
 
     break
   done
 
   ########################
-  # USERNAME / PASSWORD
+  # USER / PASS
   ########################
   if [[ "$NON_INTERACTIVE" == "1" ]]; then
     USERNAME="${USERNAME:-$(gen_username)}"
@@ -159,12 +175,11 @@ handle_params() {
 # 安装依赖
 ########################
 install_deps() {
-  local need_install=0
-  for bin in curl tar gzip jq ss; do
-    command -v "$bin" >/dev/null 2>&1 || need_install=1
+  local need=0
+  for b in curl tar gzip jq; do
+    command -v "$b" >/dev/null 2>&1 || need=1
   done
-
-  [[ "$need_install" == "0" ]] && return 0
+  [[ "$need" == "0" ]] && return
 
   yellow "👉 正在安装依赖..."
 
@@ -181,127 +196,69 @@ install_deps() {
   fi
 }
 
-
 ########################
 # 安装 sing-box
 ########################
-
 install_singbox() {
   mkdir -p "$INSTALL_DIR"
 
   case "$(uname -m)" in
-    x86_64)  SB_ARCH="amd64" ;;
+    x86_64) SB_ARCH="amd64" ;;
     aarch64) SB_ARCH="arm64" ;;
-    armv7l)  SB_ARCH="armv7" ;;
-    *)
-      red "❌ 不支持的架构: $(uname -m)"
-      exit 1
-      ;;
+    armv7l) SB_ARCH="armv7" ;;
+    *) red "❌ 不支持的架构"; exit 1 ;;
   esac
 
   TMP_DIR=$(mktemp -d)
   trap 'rm -rf "$TMP_DIR"' EXIT
 
   URL="https://github.com/SagerNet/sing-box/releases/download/${SB_VER}/sing-box-${SB_VERSION}-linux-${SB_ARCH}.tar.gz"
+  yellow "👉 下载 sing-box ${SB_VERSION}"
 
-  yellow "👉 下载 sing-box ${SB_VERSION} (${SB_ARCH})"
-
-  curl -fL \
-    --retry 3 \
-    --retry-delay 2 \
-    --connect-timeout 10 \
-    -o "$TMP_DIR/sb.tgz" "$URL" \
-    || {
-      red "❌ sing-box 下载失败"
-      red "👉 请检查网络或 GitHub 访问是否正常"
-      exit 1
-    }
-
-  tar -xf "$TMP_DIR/sb.tgz" -C "$TMP_DIR" \
-    || {
-      red "❌ sing-box 解压失败，文件可能损坏"
-      exit 1
-    }
-
-  cp "$TMP_DIR"/sing-box-*/sing-box "$BIN_FILE" \
-    || {
-      red "❌ 未找到 sing-box 可执行文件"
-      exit 1
-    }
-
+  curl -fL --retry 3 --connect-timeout 10 -o "$TMP_DIR/sb.tgz" "$URL"
+  tar -xf "$TMP_DIR/sb.tgz" -C "$TMP_DIR"
+  cp "$TMP_DIR"/sing-box-*/sing-box "$BIN_FILE"
   chmod +x "$BIN_FILE"
 
   rm -rf "$TMP_DIR"
   trap - EXIT
 
-  green "✅ sing-box ${SB_VERSION} 安装完成"
+  green "✅ sing-box 安装完成"
 }
-
-
-ensure_node_deps() {
-  command -v jq >/dev/null 2>&1 && return 0
-
-  yellow "👉 缺少 jq，正在安装..."
-
-  if command -v apt >/dev/null 2>&1; then
-    apt update -y
-    apt install -y jq
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y jq
-  elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache jq
-  else
-    red "❌ 未检测到包管理器，无法安装 jq"
-    exit 1
-  fi
-}
-
 
 ########################
 # 生成配置
 ########################
 generate_config() {
-  TMP_CFG=$(mktemp)
-  cat > "$TMP_CFG" <<EOF
+  mkdir -p "$INSTALL_DIR"
+  cat > "$CONFIG_FILE" <<EOF
 {
-  "log": {
-    "level": "info",
-    "output": "$LOG_FILE"
-  },
-  "inbounds": [
-    {
-      "type": "socks",
-      "listen": "::",
-      "listen_port": $PORT,
-      "users": [
-        { "username": "$USERNAME", "password": "$PASSWORD" }
-      ]
-    }
-  ],
-  "outbounds": [
-    { "type": "direct" }
-  ]
+  "log": { "level": "info", "output": "$LOG_FILE" },
+  "inbounds": [{
+    "type": "socks",
+    "listen": "::",
+    "listen_port": $PORT,
+    "users": [{ "username": "$USERNAME", "password": "$PASSWORD" }]
+  }],
+  "outbounds": [{ "type": "direct" }]
 }
 EOF
-  mv "$TMP_CFG" "$CONFIG_FILE"
 }
 
 ########################
-# service 模板
+# 服务
 ########################
 write_systemd_service() {
   cat > "$SERVICE_SYSTEMD" <<EOF
 [Unit]
 Description=Sing-box Socks5 Service
 After=network-online.target
-Wants=network-online.target
 
 [Service]
 ExecStart=$BIN_FILE run -c $CONFIG_FILE
 Restart=always
 RestartSec=3
 LimitNOFILE=1048576
-WorkingDirectory=$INSTALL_DIR
 
 [Install]
 WantedBy=multi-user.target
@@ -311,50 +268,33 @@ EOF
 write_openrc_service() {
   cat > "$SERVICE_OPENRC" <<EOF
 #!/sbin/openrc-run
-name="$SERVICE_NAME"
 command="$BIN_FILE"
 command_args="run -c $CONFIG_FILE"
-command_background="no"
-
 depend() { need net; }
 EOF
   chmod +x "$SERVICE_OPENRC"
 }
 
-########################
-# 启动服务
-########################
-enable_and_start_service() {
+start_service() {
+  detect_init_system
   case "$INIT_SYSTEM" in
     systemd)
+      write_systemd_service
       systemctl daemon-reload
       systemctl enable "$SERVICE_NAME"
       systemctl restart "$SERVICE_NAME"
       ;;
     openrc)
+      write_openrc_service
       rc-update add "$SERVICE_NAME" default
       rc-service "$SERVICE_NAME" restart
       ;;
-    *)
-      red "❌ 未识别的 init 系统"
-      exit 1
-      ;;
+    *) red "❌ 未识别 init 系统"; exit 1 ;;
   esac
-}
-
-start_service() {
-  detect_init_system
-
-  case "$INIT_SYSTEM" in
-    systemd) write_systemd_service ;;
-    openrc)  write_openrc_service ;;
-  esac
-
-  enable_and_start_service
 }
 
 ########################
-# 管理命令提示
+# 管理命令输出（已恢复）
 ########################
 print_manage_commands() {
   echo
@@ -375,97 +315,68 @@ print_manage_commands() {
 # 节点信息
 ########################
 show_node() {
-
-  PORT=$(jq -r '.inbounds[0].listen_port' "$CONFIG_FILE")
-  USERNAME=$(jq -r '.inbounds[0].users[0].username' "$CONFIG_FILE")
-  PASSWORD=$(jq -r '.inbounds[0].users[0].password' "$CONFIG_FILE")
-
   IP_V4=$(curl -s4 --max-time 3 ipv4.ip.sb || true)
   IP_V6=$(curl -s6 --max-time 3 ipv6.ip.sb || true)
 
   echo
   green "👉 Socks5 节点信息"
-  [[ -n "$IP_V4" ]] && blue   "IPv4: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
+  [[ -n "$IP_V4" ]] && blue "IPv4: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
   [[ -n "$IP_V6" ]] && yellow "IPv6: socks5://$USERNAME:$PASSWORD@[$IP_V6]:$PORT"
 
   print_manage_commands
 }
 
+########################
+# node 子命令依赖
+########################
+ensure_node_deps() {
+  command -v jq >/dev/null 2>&1 && return
+  install_deps
+}
 
+ensure_installed() {
+  [[ -f "$CONFIG_FILE" ]] || { red "❌ 未检测到配置文件"; exit 1; }
+}
 
 ########################
 # 卸载
 ########################
 uninstall() {
   yellow "👉 开始卸载 socks5 服务..."
-
   detect_init_system
 
-  # 停止服务
   case "$INIT_SYSTEM" in
     systemd)
-      if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
-        systemctl is-active --quiet "$SERVICE_NAME" && {
-          yellow "👉 停止服务 $SERVICE_NAME"
-          systemctl stop "$SERVICE_NAME"
-        }
-        yellow "👉 禁用服务 $SERVICE_NAME"
-        systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
-      else
-        yellow "👉 未发现 systemd 服务，跳过"
-      fi
+      systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+      systemctl disable "$SERVICE_NAME" 2>/dev/null || true
       ;;
     openrc)
-      if [ -f "$SERVICE_OPENRC" ]; then
-        yellow "👉 停止 OpenRC 服务"
-        rc-service "$SERVICE_NAME" stop >/dev/null 2>&1 || true
-        rc-update del "$SERVICE_NAME" default >/dev/null 2>&1 || true
-      else
-        yellow "👉 未发现 OpenRC 服务，跳过"
-      fi
-      ;;
-    *)
-      yellow "👉 未识别 init 系统，跳过服务处理"
+      rc-service "$SERVICE_NAME" stop 2>/dev/null || true
+      rc-update del "$SERVICE_NAME" default 2>/dev/null || true
       ;;
   esac
 
-  # 删除服务文件
   rm -f "$SERVICE_SYSTEMD" "$SERVICE_OPENRC"
+  rm -rf "$INSTALL_DIR"
 
-  # 删除安装目录
-  if [ -d "$INSTALL_DIR" ]; then
-    yellow "👉 删除安装目录 $INSTALL_DIR"
-    rm -rf "$INSTALL_DIR"
-  else
-    yellow "👉 安装目录不存在，跳过"
-  fi
-
-  green "✅ socks5 已成功卸载（如之前存在）"
+  green "✅ socks5 已卸载"
   exit 0
 }
 
-ensure_installed() {
-  if [[ ! -f "$CONFIG_FILE" ]]; then
-    red "❌ 未检测到 socks5 配置文件"
-    yellow "👉 可能原因："
-    yellow "   1) 尚未安装 socks5"
-    yellow "   2) 已执行过 uninstall"
-    yellow "👉 请先执行安装命令"
-    exit 1
-  fi
-}
-
-
 ########################
-# main
+# main（保留子命令）
 ########################
 main() {
   case "${1:-}" in
-    uninstall) uninstall ;;
-    node) 
-    ensure_node_deps
-    ensure_installed
-    show_node; exit 0 ;;
+    uninstall)
+      uninstall
+      ;;
+    node)
+      ensure_node_deps
+      ensure_installed
+      show_node
+      exit 0
+      ;;
   esac
 
   install_deps
@@ -475,7 +386,6 @@ main() {
   generate_config
   start_service
   show_node
-  print_manage_commands
 }
 
 main "$@"
