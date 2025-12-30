@@ -375,7 +375,7 @@ print_manage_commands() {
 # 节点信息
 ########################
 show_node() {
-  
+
   PORT=$(jq -r '.inbounds[0].listen_port' "$CONFIG_FILE")
   USERNAME=$(jq -r '.inbounds[0].users[0].username' "$CONFIG_FILE")
   PASSWORD=$(jq -r '.inbounds[0].users[0].password' "$CONFIG_FILE")
@@ -444,6 +444,17 @@ uninstall() {
   exit 0
 }
 
+ensure_installed() {
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    red "❌ 未检测到 socks5 配置文件"
+    yellow "👉 可能原因："
+    yellow "   1) 尚未安装 socks5"
+    yellow "   2) 已执行过 uninstall"
+    yellow "👉 请先执行安装命令"
+    exit 1
+  fi
+}
+
 
 ########################
 # main
@@ -453,6 +464,7 @@ main() {
     uninstall) uninstall ;;
     node) 
     ensure_node_deps
+    ensure_installed
     show_node; exit 0 ;;
   esac
 
