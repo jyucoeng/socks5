@@ -238,6 +238,25 @@ install_singbox() {
 }
 
 
+ensure_node_deps() {
+  command -v jq >/dev/null 2>&1 && return 0
+
+  yellow "👉 缺少 jq，正在安装..."
+
+  if command -v apt >/dev/null 2>&1; then
+    apt update -y
+    apt install -y jq
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y jq
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache jq
+  else
+    red "❌ 未检测到包管理器，无法安装 jq"
+    exit 1
+  fi
+}
+
+
 ########################
 # 生成配置
 ########################
@@ -356,6 +375,7 @@ print_manage_commands() {
 # 节点信息
 ########################
 show_node() {
+  
   PORT=$(jq -r '.inbounds[0].listen_port' "$CONFIG_FILE")
   USERNAME=$(jq -r '.inbounds[0].users[0].username' "$CONFIG_FILE")
   PASSWORD=$(jq -r '.inbounds[0].users[0].password' "$CONFIG_FILE")
@@ -431,7 +451,9 @@ uninstall() {
 main() {
   case "${1:-}" in
     uninstall) uninstall ;;
-    node) show_node; exit 0 ;;
+    node) 
+    ensure_node_deps
+    show_node; exit 0 ;;
   esac
 
   handle_params
