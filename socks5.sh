@@ -377,12 +377,53 @@ show_node() {
 # 卸载
 ########################
 uninstall() {
-  stop_existing_service
+  yellow "👉 开始卸载 socks5 服务..."
+
+  detect_init_system
+
+  # 停止服务
+  case "$INIT_SYSTEM" in
+    systemd)
+      if systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+        systemctl is-active --quiet "$SERVICE_NAME" && {
+          yellow "👉 停止服务 $SERVICE_NAME"
+          systemctl stop "$SERVICE_NAME"
+        }
+        yellow "👉 禁用服务 $SERVICE_NAME"
+        systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+      else
+        yellow "👉 未发现 systemd 服务，跳过"
+      fi
+      ;;
+    openrc)
+      if [ -f "$SERVICE_OPENRC" ]; then
+        yellow "👉 停止 OpenRC 服务"
+        rc-service "$SERVICE_NAME" stop >/dev/null 2>&1 || true
+        rc-update del "$SERVICE_NAME" default >/dev/null 2>&1 || true
+      else
+        yellow "👉 未发现 OpenRC 服务，跳过"
+      fi
+      ;;
+    *)
+      yellow "👉 未识别 init 系统，跳过服务处理"
+      ;;
+  esac
+
+  # 删除服务文件
   rm -f "$SERVICE_SYSTEMD" "$SERVICE_OPENRC"
-  rm -rf "$INSTALL_DIR"
-  green "✅ socks5 已卸载"
+
+  # 删除安装目录
+  if [ -d "$INSTALL_DIR" ]; then
+    yellow "👉 删除安装目录 $INSTALL_DIR"
+    rm -rf "$INSTALL_DIR"
+  else
+    yellow "👉 安装目录不存在，跳过"
+  fi
+
+  green "✅ socks5 已成功卸载（如之前存在）"
   exit 0
 }
+
 
 ########################
 # main
