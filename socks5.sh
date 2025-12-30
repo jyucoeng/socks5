@@ -15,6 +15,8 @@
 #  curl --socks5-hostname "ipv4:端口号"  -U 用户名:密码 http://ip.sb
 #  curl -6 --socks5-hostname "[ipv6]:端口号" -U 用户名:密码 http://ip.sb
 #
+
+
 set -e
 
 ########################
@@ -30,20 +32,24 @@ CONFIG_FILE="$INSTALL_DIR/config.json"
 BIN_FILE="$INSTALL_DIR/sing-box-socks5"
 LOG_FILE="$INSTALL_DIR/run.log"
 
-SERVICE_SYSTEMD="/etc/systemd/system/sing-box-socks5.service"
-SERVICE_OPENRC="/etc/init.d/sing-box-socks5"
+SERVICE_NAME="sing-box-socks5"
+SERVICE_SYSTEMD="/etc/systemd/system/${SERVICE_NAME}.service"
+SERVICE_OPENRC="/etc/init.d/${SERVICE_NAME}"
 
 SB_VERSION="1.12.13"
 SB_VER="v${SB_VERSION}"
 
 ########################
-# 工具函数
+# 颜色工具
 ########################
 green(){ echo -e "\e[1;32m$1\033[0m"; }
 yellow(){ echo -e "\e[1;33m$1\033[0m"; }
 red(){ echo -e "\e[31m$1\033[0m"; }
 blue(){ echo -e "\e[1;34m$1\033[0m"; }
 
+########################
+# 工具函数
+########################
 gen_username() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 10; }
 gen_password() { tr -dc 'A-Za-z0-9!@#%^_+' </dev/urandom | head -c 12; }
 
@@ -52,20 +58,42 @@ check_port_free() {
 }
 
 ########################
-# 停止旧服务（覆盖安装关键）
+# init 系统检测
+########################
+detect_init_system() {
+  if command -v systemctl >/dev/null 2>&1 && pidof systemd >/dev/null 2>&1; then
+    INIT_SYSTEM="systemd"
+  elif command -v rc-service >/dev/null 2>&1; then
+    INIT_SYSTEM="openrc"
+  else
+    INIT_SYSTEM=""
+  fi
+}
+
+########################
+# 非交互兜底校验
+########################
+ensure_required_env() {
+  red "❌ 缺少必要参数：PORT"
+  red "👉 当前环境无法进行交互输入"
+  yellow "👉 示例：PORT=1080 bash socks5.sh"
+  exit 1
+}
+
+########################
+# 停止旧服务
 ########################
 stop_existing_service() {
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl is-active --quiet sing-box-socks5 && {
-      yellow "👉 停止已存在的 sing-box-socks5（systemd）"
-      systemctl stop sing-box-socks5
-    }
-  elif command -v rc-service >/dev/null 2>&1; then
-    rc-service sing-box-socks5 status >/dev/null 2>&1 && {
-      yellow "👉 停止已存在的 sing-box-socks5（OpenRC）"
-      rc-service sing-box-socks5 stop
-    }
-  fi
+  detect_init_system
+
+  case "$INIT_SYSTEM" in
+    systemd)
+      systemctl is-active --quiet "$SERVICE_NAME" && systemctl stop "$SERVICE_NAME"
+      ;;
+    openrc)
+      rc-service "$SERVICE_NAME" status >/dev/null 2>&1 && rc-service "$SERVICE_NAME" stop
+      ;;
+  esac
 }
 
 ########################
@@ -73,44 +101,45 @@ stop_existing_service() {
 ########################
 handle_params() {
 
-  # 非 TTY 保护
-  if [[ ! -t 0 && -z "$PORT" ]]; then
-    red "❌ 当前为非交互环境，且未指定 PORT，无法继续"
-    exit 1
-  fi
-
-  # 非交互判定
+  ########################
+  # 安装模式判定
+  ########################
   if [[ -n "$PORT" || -n "$USERNAME" || -n "$PASSWORD" ]]; then
     NON_INTERACTIVE=1
-    yellow "👉 非交互式安装（检测到环境变量）"
+    yellow "👉 非交互式安装"
   else
     NON_INTERACTIVE=0
     yellow "👉 交互式安装"
   fi
 
   ########################
-  # PORT（强制人工确认 + 校验）
+  # PORT 处理
   ########################
-  if [[ -z "$PORT" ]]; then
-    red "❗ 必须指定端口号"
-    while :; do
-      read -rp "请输入端口号: " PORT
-
-      [[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT >= 1 && PORT <= 65535 )) || {
-        red "❌ 端口必须是 1-65535 的数字"
-        PORT=""
-        continue
-      }
-
-      check_port_free "$PORT" && break
-      red "❌ 端口被占用，请重新输入"
-    done
-  else
-    [[ "$PORT" =~ ^[0-9]+$ ]] && (( PORT >= 1 && PORT <= 65535 )) || {
-      red "❌ PORT 必须是 1-65535 的数字"
-      exit 1
-    }
+  if [[ "$NON_INTERACTIVE" == "1" && -z "$PORT" ]]; then
+    ensure_required_env
   fi
+
+  while :; do
+    if [[ -z "$PORT" ]]; then
+      read -rp "请输入端口号: " PORT
+    fi
+
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || ((PORT < 1 || PORT > 65535)); then
+      red "❌ 端口必须是 1-65535 的数字"
+      [[ "$NON_INTERACTIVE" == "1" ]] && exit 1
+      PORT=""
+      continue
+    fi
+
+    if ! check_port_free "$PORT"; then
+      red "❌ 端口被占用，请重新输入"
+      [[ "$NON_INTERACTIVE" == "1" ]] && exit 1
+      PORT=""
+      continue
+    fi
+
+    break
+  done
 
   ########################
   # USERNAME / PASSWORD
@@ -119,10 +148,9 @@ handle_params() {
     USERNAME="${USERNAME:-$(gen_username)}"
     PASSWORD="${PASSWORD:-$(gen_password)}"
   else
-    read -rp "请输入用户名（直接回车自动生成）: " INPUT_USERNAME
+    read -rp "用户名（回车自动生成）: " INPUT_USERNAME
     USERNAME="${INPUT_USERNAME:-$(gen_username)}"
-
-    read -rp "请输入密码（直接回车自动生成）: " INPUT_PASSWORD
+    read -rp "密码（回车自动生成）: " INPUT_PASSWORD
     PASSWORD="${INPUT_PASSWORD:-$(gen_password)}"
   fi
 }
@@ -131,6 +159,15 @@ handle_params() {
 # 安装依赖
 ########################
 install_deps() {
+  local need_install=0
+  for bin in curl tar gzip jq ss; do
+    command -v "$bin" >/dev/null 2>&1 || need_install=1
+  done
+
+  [[ "$need_install" == "0" ]] && return 0
+
+  yellow "👉 正在安装依赖..."
+
   if command -v apt >/dev/null 2>&1; then
     apt update -y
     apt install -y curl tar gzip jq iproute2
@@ -144,18 +181,22 @@ install_deps() {
   fi
 }
 
+
 ########################
-# 安装 sing-box（失败自动清理）
+# 安装 sing-box
 ########################
+
 install_singbox() {
   mkdir -p "$INSTALL_DIR"
 
-  ARCH=$(uname -m)
-  case "$ARCH" in
+  case "$(uname -m)" in
     x86_64)  SB_ARCH="amd64" ;;
     aarch64) SB_ARCH="arm64" ;;
     armv7l)  SB_ARCH="armv7" ;;
-    *) red "❌ 不支持的架构: $ARCH"; exit 1 ;;
+    *)
+      red "❌ 不支持的架构: $(uname -m)"
+      exit 1
+      ;;
   esac
 
   TMP_DIR=$(mktemp -d)
@@ -163,18 +204,42 @@ install_singbox() {
 
   URL="https://github.com/SagerNet/sing-box/releases/download/${SB_VER}/sing-box-${SB_VERSION}-linux-${SB_ARCH}.tar.gz"
 
-  curl -L -o "$TMP_DIR/sb.tgz" "$URL"
-  tar -xf "$TMP_DIR/sb.tgz" -C "$TMP_DIR"
+  yellow "👉 下载 sing-box ${SB_VERSION} (${SB_ARCH})"
 
-  cp "$TMP_DIR"/sing-box-*/sing-box "$BIN_FILE"
+  curl -fL \
+    --retry 3 \
+    --retry-delay 2 \
+    --connect-timeout 10 \
+    -o "$TMP_DIR/sb.tgz" "$URL" \
+    || {
+      red "❌ sing-box 下载失败"
+      red "👉 请检查网络或 GitHub 访问是否正常"
+      exit 1
+    }
+
+  tar -xf "$TMP_DIR/sb.tgz" -C "$TMP_DIR" \
+    || {
+      red "❌ sing-box 解压失败，文件可能损坏"
+      exit 1
+    }
+
+  cp "$TMP_DIR"/sing-box-*/sing-box "$BIN_FILE" \
+    || {
+      red "❌ 未找到 sing-box 可执行文件"
+      exit 1
+    }
+
   chmod +x "$BIN_FILE"
 
   rm -rf "$TMP_DIR"
   trap - EXIT
+
+  green "✅ sing-box ${SB_VERSION} 安装完成"
 }
 
+
 ########################
-# 生成配置（原子写入）
+# 生成配置
 ########################
 generate_config() {
   TMP_CFG=$(mktemp)
@@ -190,10 +255,7 @@ generate_config() {
       "listen": "::",
       "listen_port": $PORT,
       "users": [
-        {
-          "username": "$USERNAME",
-          "password": "$PASSWORD"
-        }
+        { "username": "$USERNAME", "password": "$PASSWORD" }
       ]
     }
   ],
@@ -206,12 +268,10 @@ EOF
 }
 
 ########################
-# 启动服务（systemd / OpenRC）
+# service 模板
 ########################
-start_service() {
-
-  if command -v systemctl >/dev/null 2>&1; then
-    cat > "$SERVICE_SYSTEMD" <<EOF
+write_systemd_service() {
+  cat > "$SERVICE_SYSTEMD" <<EOF
 [Unit]
 Description=Sing-box Socks5 Service
 After=network-online.target
@@ -227,69 +287,121 @@ WorkingDirectory=$INSTALL_DIR
 [Install]
 WantedBy=multi-user.target
 EOF
+}
 
-    systemctl daemon-reload
-    systemctl enable sing-box-socks5
-    systemctl restart sing-box-socks5
-    INIT_SYSTEM="systemd"
-    return
-  fi
-
-  if command -v rc-service >/dev/null 2>&1; then
-    cat > "$SERVICE_OPENRC" <<EOF
+write_openrc_service() {
+  cat > "$SERVICE_OPENRC" <<EOF
 #!/sbin/openrc-run
-
-name="sing-box-socks5"
+name="$SERVICE_NAME"
 command="$BIN_FILE"
 command_args="run -c $CONFIG_FILE"
 command_background="no"
 
-depend() {
-  need net
-}
+depend() { need net; }
 EOF
+  chmod +x "$SERVICE_OPENRC"
+}
 
-    chmod +x "$SERVICE_OPENRC"
-    rc-update add sing-box-socks5 default
-    rc-service sing-box-socks5 restart
-    INIT_SYSTEM="openrc"
-    return
+########################
+# 启动服务
+########################
+enable_and_start_service() {
+  case "$INIT_SYSTEM" in
+    systemd)
+      systemctl daemon-reload
+      systemctl enable "$SERVICE_NAME"
+      systemctl restart "$SERVICE_NAME"
+      ;;
+    openrc)
+      rc-update add "$SERVICE_NAME" default
+      rc-service "$SERVICE_NAME" restart
+      ;;
+    *)
+      red "❌ 未识别的 init 系统"
+      exit 1
+      ;;
+  esac
+}
+
+start_service() {
+  detect_init_system
+
+  case "$INIT_SYSTEM" in
+    systemd) write_systemd_service ;;
+    openrc)  write_openrc_service ;;
+  esac
+
+  enable_and_start_service
+}
+
+########################
+# 管理命令提示
+########################
+print_manage_commands() {
+  echo
+  yellow "管理命令："
+
+  if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+    green "查看状态:  systemctl status $SERVICE_NAME"
+    green "重启服务:  systemctl restart $SERVICE_NAME"
+    green "查看日志:  journalctl -u $SERVICE_NAME -f"
+  else
+    green "查看状态:  rc-service $SERVICE_NAME status"
+    green "重启服务:  rc-service $SERVICE_NAME restart"
+    green "查看日志:  tail -f $LOG_FILE"
   fi
+}
 
-  red "❌ 未识别的 init 系统"
-  exit 1
+########################
+# 节点信息
+########################
+show_node() {
+  PORT=$(jq -r '.inbounds[0].listen_port' "$CONFIG_FILE")
+  USERNAME=$(jq -r '.inbounds[0].users[0].username' "$CONFIG_FILE")
+  PASSWORD=$(jq -r '.inbounds[0].users[0].password' "$CONFIG_FILE")
+
+  IP_V4=$(curl -s4 --max-time 3 ipv4.ip.sb || true)
+  IP_V6=$(curl -s6 --max-time 3 ipv6.ip.sb || true)
+
+  echo
+  green "👉 Socks5 节点信息"
+  [[ -n "$IP_V4" ]] && blue   "IPv4: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
+  [[ -n "$IP_V6" ]] && yellow "IPv6: socks5://$USERNAME:$PASSWORD@[$IP_V6]:$PORT"
+
+  print_manage_commands
+}
+
+
+
+########################
+# 卸载
+########################
+uninstall() {
+  stop_existing_service
+  rm -f "$SERVICE_SYSTEMD" "$SERVICE_OPENRC"
+  rm -rf "$INSTALL_DIR"
+  green "✅ socks5 已卸载"
+  exit 0
 }
 
 ########################
 # main
 ########################
 main() {
+  case "${1:-}" in
+    uninstall) uninstall ;;
+    node) show_node; exit 0 ;;
+  esac
+
   handle_params
   stop_existing_service
   install_deps
   install_singbox
   generate_config
   start_service
-
-  IP_V4=$(curl -s4 --max-time 3 ipv4.ip.sb || true)
-  IP_V6=$(curl -s6 --max-time 3 ipv6.ip.sb || true)
-
-  echo
-  green "✅ Socks5 服务已启动"
-  [[ -n "$IP_V4" ]] && blue   "IPv4: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
-  [[ -n "$IP_V6" ]] && yellow "IPv6: socks5://$USERNAME:$PASSWORD@[$IP_V6]:$PORT"
-
-  echo
-  yellow "管理命令："
-  if [[ "$INIT_SYSTEM" == "systemd" ]]; then
-    green "查看状态:  systemctl status sing-box-socks5"
-    green "重启服务:   systemctl restart sing-box-socks5"
-    green "查看日志:   journalctl -u sing-box-socks5 -f"
-  else
-    green "查看状态:  rc-service sing-box-socks5 status"
-    green "重启服务:   rc-service sing-box-socks5 restart"
-    green "查看日志:   tail -f $LOG_FILE"
-  fi
+  show_node
+  print_manage_commands
 }
 
 main "$@"
+
