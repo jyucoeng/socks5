@@ -20,7 +20,6 @@
 
 set -e
 
-
 ########################
 # root 校验
 ########################
@@ -87,7 +86,7 @@ gen_random_port() {
 # init 系统检测
 ########################
 detect_init_system() {
-  if command -v systemctl >/dev/null 2>&1 && pidof systemd >/dev/null 2>&1; then
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     INIT_SYSTEM="systemd"
   elif command -v rc-service >/dev/null 2>&1; then
     INIT_SYSTEM="openrc"
@@ -95,6 +94,7 @@ detect_init_system() {
     INIT_SYSTEM=""
   fi
 }
+
 
 ########################
 # 停止旧服务
@@ -270,9 +270,16 @@ EOF
 write_openrc_service() {
   cat > "$SERVICE_OPENRC" <<EOF
 #!/sbin/openrc-run
+
 command="$BIN_FILE"
 command_args="run -c $CONFIG_FILE"
-depend() { need net; }
+
+command_background="yes"
+pidfile="/run/${SERVICE_NAME}.pid"
+
+depend() {
+  need net
+}
 EOF
   chmod +x "$SERVICE_OPENRC"
 }
@@ -391,4 +398,3 @@ main() {
 }
 
 main "$@"
-
