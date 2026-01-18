@@ -14,7 +14,7 @@ PORT=端口号 USERNAME=用户名 PASSWORD=密码 bash <(curl -Ls https://raw.gi
 ### 手动查看已安装的socks5节点:
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/socks5/refs/heads/main/socks5.sh) node
-
+```
 ### 卸载:
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/socks5/refs/heads/main/socks5.sh) uninstall
