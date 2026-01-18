@@ -19,7 +19,6 @@
 #
 set -e
 
-
 ########################
 # root 校验
 ########################
@@ -196,7 +195,28 @@ install_deps() {
     red "❌ 不支持的系统"
     exit 1
   fi
+
+  install_glibc
+
 }
+
+install_glibc() {
+  # 检查是否为 Alpine 系统
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    if [[ "$ID" == "alpine" ]]; then
+      yellow "👉 当前系统为 Alpine，正在安装 glibc 兼容包..."
+      echo "http://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories
+      apk update
+      apk add libc6-compat
+    else
+      yellow "👉 当前系统不是 Alpine，跳过 glibc 兼容包安装"
+    fi
+  else
+    yellow "❌ 无法识别系统，跳过 glibc 兼容包安装"
+  fi
+}
+
 
 ########################
 # 安装 sing-box
