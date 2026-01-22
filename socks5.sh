@@ -366,7 +366,7 @@ show_node() {
     blue "IPv4: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
   fi
   if [[ -n "$IP_V6" ]]; then
-    yellow "IPv6: socks5://$USERNAME:$PASSWORD@$IP_V6:$PORT"
+    yellow "IPv6: socks5://$USERNAME:$PASSWORD@[${IP_V6}]:$PORT"
   fi
 
   print_manage_commands
